@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rootstock Gasless Transactions</title>
+
+    <!-- ✅ FIXED: removed < > -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.umd.min.js"></script>
+
+    <style>
+        body { font-family: system-ui; max-width: 600px; margin: 50px auto; padding: 20px; }
+        .card { background: #f9f9f9; padding: 20px; border-radius: 8px; margin: 15px 0; }
+        button { background: #4CAF50; color: white; border: none; padding: 12px 24px;
+                 border-radius: 5px; cursor: pointer; font-size: 16px; }
+        button:disabled { background: #ccc; }
+        .counter { font-size: 48px; text-align: center; color: #4CAF50; }
+        .status { padding: 10px; margin: 10px 0; border-radius: 4px; }
+        .info { background: #e3f2fd; }
+        .success { background: #e8f5e9; }
+        .error { background: #ffebee; }
+    </style>
+</head>
+<body>
+    <h1>Rootstock Gasless Demo</h1>
+
+    <div class="card">
+        <p><strong>Network:</strong> Rootstock Testnet (Chain ID: 31)</p>
+        <div id="status"></div>
+    </div>
+
+    <div id="connect-section">
+        <button onclick="connect()">Connect MetaMask</button>
+    </div>
+
+    <div id="app-section" style="display:none;">
+        <div class="card">
+            <p><strong>Address:</strong> <span id="address"></span></p>
+            <p><strong>Nonce:</strong> <span id="nonce">-</span></p>
+        </div>
+
+        <div class="counter" id="counter">0</div>
+
+        <button id="incrementBtn" onclick="increment()">Increment (Gasless)</button>
+        <button onclick="refresh()">Refresh</button>
+    </div>
+
+    <script>
+        const CONFIG = {
+            chainId: 31,
+            relayerUrl: "http://localhost:3001", // ✅ FIXED
+            forwarderAddress: "0x96A1958e1eDc62272Aa55279E9CE0bf7091bA16e",
+            recipientAddress: "0xAad45C473beA23CC027974184718Ce306101FEE7"
+        };
+
+        let provider, signer, userAddress;
+
+        async function connect() {
+            try {
+                if (!window.ethereum) throw new Error("No crypto wallet found");
+
+                provider = new ethers.BrowserProvider(window.ethereum);
+                await provider.send("eth_requestAccounts", []);
+
+                const network = await provider.getNetwork();
+
+                if (Number(network.chainId) !== CONFIG.chainId) {
+                    await window.ethereum.request({
+                        method: "wallet_switchEthereumChain",
+                        params: [{ chainId: "0x1f" }]
+                    });
+                }
+
+                signer = await provider.getSigner();
+                userAddress = await signer.getAddress();
+
+                document.getElementById("address").textContent = userAddress;
+                document.getElementById("connect-section").style.display = "none";
+                document.getElementById("app-section").style.display = "block";
+
+                await refresh();
+                showStatus("Connected!", "success");
+
+            } catch (e) {
+                showStatus("Connection failed: " + e.message, "error");
+            }
+        }
+
+        async function refresh() {
+            try {
+                if (!userAddress) {
+                    showStatus("Wallet not connected", "error");
+                    return;
+                }
+
+                // ✅ Fetch nonce safely
+                const nonceRes = await fetch(`${CONFIG.relayerUrl}/nonce/${userAddress}`);
+
+                if (!nonceRes.ok) {
+                    throw new Error("Relayer not responding");
+                }
+
+                const data = await nonceRes.json();
+                document.getElementById("nonce").textContent = data.nonce ?? "-";
+
+                // ✅ Contract read safely
+                if (!CONFIG.recipientAddress || CONFIG.recipientAddress === "YOUR_RECIPIENT_ADDRESS") {
+                    throw new Error("Recipient contract not set");
+                }
+
+                const abi = ["function getCounter(address) view returns (uint256)"];
+                const contract = new ethers.Contract(CONFIG.recipientAddress, abi, provider);
+
+                const counter = await contract.getCounter(userAddress);
+                document.getElementById("counter").textContent = counter.toString();
+
+            } catch (e) {
+                showStatus("Refresh error: " + e.message, "error");
+            }
+        }
+
+        async function increment() {
+            const btn = document.getElementById("incrementBtn");
+            btn.disabled = true;
+
+            try {
+                if (!userAddress) throw new Error("Connect wallet first");
+
+                showStatus("Preparing transaction...", "info");
+
+                const nonceRes = await fetch(`${CONFIG.relayerUrl}/nonce/${userAddress}`);
+                if (!nonceRes.ok) throw new Error("Failed to fetch nonce");
+
+                const { nonce } = await nonceRes.json();
+
+                const iface = new ethers.Interface(["function incrementCounter()"]);
+                const data = iface.encodeFunctionData("incrementCounter");
+
+                const request = {
+                    from: userAddress,
+                    to: CONFIG.recipientAddress,
+                    value: 0,
+                    gas: 100000,
+                    nonce: parseInt(nonce),
+                    data: data
+                };
+
+                showStatus("Sign the message in MetaMask...", "info");
+
+                const domain = {
+                    name: "MinimalForwarder",
+                    version: "0.0.1",
+                    chainId: CONFIG.chainId,
+                    verifyingContract: CONFIG.forwarderAddress
+                };
+
+                const types = {
+                    ForwardRequest: [
+                        { name: "from", type: "address" },
+                        { name: "to", type: "address" },
+                        { name: "value", type: "uint256" },
+                        { name: "gas", type: "uint256" },
+                        { name: "nonce", type: "uint256" },
+                        { name: "data", type: "bytes" }
+                    ]
+                };
+
+                const signature = await signer.signTypedData(domain, types, request);
+
+                showStatus("Sending to relayer...", "info");
+
+                const res = await fetch(`${CONFIG.relayerUrl}/relay`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ request, signature })
+                });
+
+                const result = await res.json();
+
+                if (!res.ok) throw new Error(result.error || "Relay failed");
+
+                showStatus(`Success! TX: ${result.txHash}`, "success");
+
+                setTimeout(refresh, 2000);
+
+            } catch (e) {
+                showStatus("Error: " + e.message, "error");
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        function showStatus(msg, type) {
+            const statusDiv = document.getElementById("status");
+
+            const el = document.createElement("div");
+            el.className = `status ${type}`;
+            el.textContent = msg; // ✅ prevents HTML injection
+
+            statusDiv.innerHTML = ""; // clear old (optional)
+            statusDiv.appendChild(el);
+        }
+    </script>
+</body>
+</html>
