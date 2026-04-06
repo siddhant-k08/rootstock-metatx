@@ -1,7 +1,20 @@
-# Sample Hardhat 3 Beta Project (minimal)
+# Sponsored Transactions on Rootstock
 
-This project has a minimal setup of Hardhat 3 Beta, without any plugins.
+Update the values in `.env` with your own values
 
-## What's included?
+---
 
-The project includes native support for TypeScript, Hardhat scripts, tasks, and support for Solidity compilation and tests.
+To deploy contracts, run:
+```bash
+npx hardhat ignition deploy ignition/modules/ExampleRecipient.ts --network rootstockTestnet
+```
+
+To start the relayer:
+```bash
+cd relayer && node server.ts
+```
+
+To start the frontend, run:
+```bash
+cd frontend && npx serve .
+```
