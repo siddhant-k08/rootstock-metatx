@@ -98,10 +98,25 @@ Visit [Rootstock Testnet Faucet](https://faucet.rootstock.io/) to fund the relay
 ### 5. Start the Services
 
 **Terminal 1 - Start Relayer:**
+
+The relayer is written in TypeScript (`server.ts`), so it cannot be executed directly with plain `node`. Use one of the options below:
+
 ```bash
 cd relayer
 npm install
-node server.ts
+
+# Option A: run via the npm script (uses ts-node, already in devDependencies)
+npm start
+
+# Option B: run directly with ts-node
+npx ts-node server.ts
+
+# Option C: run with tsx
+npx tsx server.ts
+
+# Option D: compile first, then run the JS output
+npx tsc server.ts --esModuleInterop --resolveJsonModule
+node server.js
 ```
 
 **Terminal 2 - Start Frontend:**
@@ -115,6 +130,8 @@ npx serve .
 1. Open `http://localhost:3000` in your browser
 2. Connect MetaMask (ensure Rootstock Testnet is selected)
 3. Click "Increment (Gasless)" to execute a transaction without paying gas!
+
+> **Note:** `frontend/index.html` ships with hardcoded `forwarderAddress` and `recipientAddress` values inside the `CONFIG` object. These are placeholders from a previous deployment — **replace them with the addresses you obtained in Step 3** before using the frontend, otherwise the demo will interact with contracts you do not control (or that no longer exist).
 
 ## 📁 Project Structure
 
@@ -150,7 +167,7 @@ The tests cover:
 
 ### Smart Contracts
 
-The contracts use OpenZeppelin's audited EIP-2771 implementations:
+The contracts use OpenZeppelin's EIP-2771 implementations:
 
 - **ERC2771Context**: Provides `_msgSender()` functionality
 - **MinimalForwarder**: Verifies signatures and forwards calls
@@ -159,6 +176,8 @@ Key patterns:
 - Always use `_msgSender()` instead of `msg.sender` in meta-transaction enabled functions
 - The trusted forwarder is set at construction time and cannot be changed
 - All signature verification happens on-chain for security
+
+> **⚠️ Caveat on `MinimalForwarder`:** OpenZeppelin's `MinimalForwarder` is explicitly published as a **learning / reference implementation** of EIP-2771 and is **not intended to be used in production as-is**. It lacks several features required by a hardened relayer system (e.g. robust gas accounting, batched/atomic execution, replay-protection edge cases across chains, allowlists, and economic safeguards). Treat the forwarder in this repo the same way: it is great for understanding the meta-transaction flow on Rootstock, but if you plan to ship gasless transactions to real users you should either (a) audit and extend `MinimalForwarder` to address these gaps, or (b) adopt a production-grade forwarder/relayer stack (for example a properly reviewed ERC-2771 forwarder such as OpenZeppelin's newer `ERC2771Forwarder`, or a managed relayer service).
 
 ### Relayer Service
 
